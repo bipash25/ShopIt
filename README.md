@@ -56,7 +56,7 @@ Search both Amazon and Flipkart in parallel.
 | `q` | string | *required* | Search query (e.g. `iPhone 15`, `laptop`) |
 | `source` | string | `all` | Which site(s): `amazon`, `flipkart`, or `all` |
 | `page` | int | `1` | Page number (1–50) |
-| `all_pages` | bool | `false` | Fetch ALL pages automatically (max 20 pages, ~1s delay between) |
+| `all_pages` | bool | `false` | Fetch ALL pages automatically (max 20 pages, ~1s delay between). **Requires at least one filter.** |
 | `sort` | string | `null` | Sort order (see sort values below) |
 | `min_price` | int | `null` | Minimum price in INR |
 | `max_price` | int | `null` | Maximum price in INR |
@@ -234,6 +234,7 @@ curl "http://localhost:8000/api/search/amazon?q=smartphone&rh=p_123%3A46655"
 
 Set `all_pages=true` on any endpoint to automatically loop through every available page and return all products in a single response.
 
+- **Requires at least one filter** — `all_pages` is rejected (HTTP 400) on plain, unfiltered searches to prevent fetching dozens of pages. Apply any combination of `sort`, `min_price`, `max_price`, `brand`, or `rh` (Amazon) first.
 - **Max 20 pages** per request (safety cap)
 - **1-second delay** between page requests (rate-limit protection)
 - The `total_pages_fetched` field shows how many pages were retrieved
