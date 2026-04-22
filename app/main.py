@@ -69,6 +69,7 @@ async def _fetch_all_pages_amazon(
     q: str, sort: str | None,
     min_price: int | None, max_price: int | None,
     brand: str | None, rh: str | None,
+    max_pages: int = 20,
 ) -> SearchResponse:
     first = await amazon.search(
         q, page=1, sort=sort,
@@ -81,7 +82,7 @@ async def _fetch_all_pages_amazon(
     current_page = 1
 
     while first.has_next_page if pages_fetched == 1 else result.has_next_page:
-        if pages_fetched >= MAX_ALL_PAGES:
+        if pages_fetched >= max_pages:
             break
         current_page += 1
         await asyncio.sleep(ALL_PAGES_DELAY)
@@ -108,6 +109,7 @@ async def _fetch_all_pages_flipkart(
     q: str, sort: str | None,
     min_price: int | None, max_price: int | None,
     brand: str | None,
+    max_pages: int = 20,
 ) -> SearchResponse:
     first = await flipkart.search(
         q, page=1, sort=sort,
@@ -120,7 +122,7 @@ async def _fetch_all_pages_flipkart(
     current_page = 1
 
     while first.has_next_page if pages_fetched == 1 else result.has_next_page:
-        if pages_fetched >= MAX_ALL_PAGES:
+        if pages_fetched >= max_pages:
             break
         current_page += 1
         await asyncio.sleep(ALL_PAGES_DELAY)
@@ -154,7 +156,8 @@ async def search(
     q: Annotated[str, Query(min_length=1, description="Search query (e.g. 'iPhone 15', 'laptop', 'headphones')")],
     source: Annotated[Source, Query(description="Which site(s) to search — `all` queries both in parallel")] = Source.all,
     page: Annotated[int, Query(ge=1, le=50, description="Page number (ignored when `all_pages=true`)")] = 1,
-    all_pages: Annotated[bool, Query(description="Fetch ALL pages and return the full product list (max 20 pages). Requires at least one filter applied.")] = False,
+    all_pages: Annotated[bool, Query(description="Fetch ALL pages and return the full product list. Requires at least one filter applied.")] = False,
+    max_pages: Annotated[int, Query(ge=1, le=100, description="Max pages to fetch when `all_pages=true`")] = 20,
     sort: Annotated[str | None, Query(description="Sort order — Amazon: `price-asc-rank`, `price-desc-rank`, `review-rank`, `date-desc-rank` | Flipkart: `price_asc`, `price_desc`, `popularity`, `recency_desc`")] = None,
     min_price: Annotated[int | None, Query(ge=0, description="Minimum price filter in INR")] = None,
     max_price: Annotated[int | None, Query(ge=0, description="Maximum price filter in INR")] = None,
@@ -168,7 +171,7 @@ async def search(
 
     Set `all_pages=true` to automatically paginate through every available page
     and return the complete product list in a single response. This is rate-limited
-    to 1 request/second per source and capped at 20 pages max.
+    to 1 request/second per source. You can control the cap with `max_pages`.
 
     **Note:** `all_pages` requires at least one filter (`min_price`, `max_price`, `brand`, or `sort`)
     to prevent excessively large unfiltered fetches.
@@ -189,18 +192,18 @@ async def search(
     tasks = []
     for s in sources:
         if all_pages:
-            ck = _cache_key(s.value, q=q, all_pages=True, sort=sort, min_price=min_price, max_price=max_price, brand=brand)
+            ck = _cache_key(s.value, q=q, all_pages=True, max_pages=max_pages, sort=sort, min_price=min_price, max_price=max_price, brand=brand)
             cached_result = cache.get(*ck)
             if cached_result:
                 cached_result.cached = True
                 tasks.append(_wrap_cached(cached_result))
             elif s == Source.amazon:
                 tasks.append(_fetch_all_cached(
-                    _fetch_all_pages_amazon(q, sort, min_price, max_price, brand, None), ck
+                    _fetch_all_pages_amazon(q, sort, min_price, max_price, brand, None, max_pages), ck
                 ))
             else:
                 tasks.append(_fetch_all_cached(
-                    _fetch_all_pages_flipkart(q, sort, min_price, max_price, brand), ck
+                    _fetch_all_pages_flipkart(q, sort, min_price, max_price, brand, max_pages), ck
                 ))
         else:
             ck = _cache_key(s.value, q=q, page=page, sort=sort, min_price=min_price, max_price=max_price, brand=brand)
@@ -272,7 +275,8 @@ async def _search_flipkart(
 async def search_amazon(
     q: Annotated[str, Query(min_length=1, description="Search query")],
     page: Annotated[int, Query(ge=1, le=50, description="Page number (ignored when `all_pages=true`)")] = 1,
-    all_pages: Annotated[bool, Query(description="Fetch ALL pages and return complete product list (max 20 pages). Requires at least one filter applied.")] = False,
+    all_pages: Annotated[bool, Query(description="Fetch ALL pages and return complete product list. Requires at least one filter applied.")] = False,
+    max_pages: Annotated[int, Query(ge=1, le=100, description="Max pages to fetch when `all_pages=true`")] = 20,
     sort: Annotated[str | None, Query(description="Sort: `price-asc-rank` | `price-desc-rank` | `review-rank` | `date-desc-rank`")] = None,
     min_price: Annotated[int | None, Query(ge=0, description="Min price in INR")] = None,
     max_price: Annotated[int | None, Query(ge=0, description="Max price in INR")] = None,
@@ -288,8 +292,8 @@ async def search_amazon(
 
     **Sort options:** `price-asc-rank`, `price-desc-rank`, `review-rank`, `date-desc-rank`
 
-    **All pages:** Set `all_pages=true` to auto-paginate through every page (max 20).
-    Requires at least one filter to be applied.
+    **All pages:** Set `all_pages=true` to auto-paginate through every page.
+    Requires at least one filter to be applied. Control the cap using `max_pages`.
     """
     if all_pages and not _has_filters(sort=sort, min_price=min_price, max_price=max_price, brand=brand, rh=rh):
         raise HTTPException(
@@ -299,12 +303,12 @@ async def search_amazon(
         )
 
     if all_pages:
-        ck = _cache_key("amazon", q=q, all_pages=True, sort=sort, min_price=min_price, max_price=max_price, brand=brand, rh=rh)
+        ck = _cache_key("amazon", q=q, all_pages=True, max_pages=max_pages, sort=sort, min_price=min_price, max_price=max_price, brand=brand, rh=rh)
         cached_result = cache.get(*ck)
         if cached_result:
             cached_result.cached = True
             return cached_result
-        result = await _fetch_all_pages_amazon(q, sort, min_price, max_price, brand, rh)
+        result = await _fetch_all_pages_amazon(q, sort, min_price, max_price, brand, rh, max_pages)
         cache.set(result, *ck)
         return result
 
@@ -332,7 +336,8 @@ async def search_amazon(
 async def search_flipkart(
     q: Annotated[str, Query(min_length=1, description="Search query")],
     page: Annotated[int, Query(ge=1, le=50, description="Page number (ignored when `all_pages=true`)")] = 1,
-    all_pages: Annotated[bool, Query(description="Fetch ALL pages and return complete product list (max 20 pages). Requires at least one filter applied.")] = False,
+    all_pages: Annotated[bool, Query(description="Fetch ALL pages and return complete product list. Requires at least one filter applied.")] = False,
+    max_pages: Annotated[int, Query(ge=1, le=100, description="Max pages to fetch when `all_pages=true`")] = 20,
     sort: Annotated[str | None, Query(description="Sort: `price_asc` | `price_desc` | `popularity` | `recency_desc` | `rating_desc`")] = None,
     min_price: Annotated[int | None, Query(ge=0, description="Min price in INR")] = None,
     max_price: Annotated[int | None, Query(ge=0, description="Max price in INR")] = None,
@@ -345,8 +350,8 @@ async def search_flipkart(
 
     **Sort options:** `price_asc`, `price_desc`, `popularity`, `recency_desc`, `rating_desc`
 
-    **All pages:** Set `all_pages=true` to auto-paginate through every page (max 20).
-    Requires at least one filter to be applied.
+    **All pages:** Set `all_pages=true` to auto-paginate through every page.
+    Requires at least one filter to be applied. Control the cap using `max_pages`.
     """
     if all_pages and not _has_filters(sort=sort, min_price=min_price, max_price=max_price, brand=brand):
         raise HTTPException(
@@ -356,12 +361,12 @@ async def search_flipkart(
         )
 
     if all_pages:
-        ck = _cache_key("flipkart", q=q, all_pages=True, sort=sort, min_price=min_price, max_price=max_price, brand=brand)
+        ck = _cache_key("flipkart", q=q, all_pages=True, max_pages=max_pages, sort=sort, min_price=min_price, max_price=max_price, brand=brand)
         cached_result = cache.get(*ck)
         if cached_result:
             cached_result.cached = True
             return cached_result
-        result = await _fetch_all_pages_flipkart(q, sort, min_price, max_price, brand)
+        result = await _fetch_all_pages_flipkart(q, sort, min_price, max_price, brand, max_pages)
         cache.set(result, *ck)
         return result
 
