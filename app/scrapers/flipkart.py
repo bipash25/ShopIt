@@ -50,7 +50,14 @@ def _build_page_uri(
     brand: str | None = None,
     filters: dict[str, list[str]] | None = None,
 ) -> str:
-    params: dict[str, str] = {"q": query}
+    params: dict[str, str] = {
+        "q": query,
+        "otracker": "search",
+        "otracker1": "search",
+        "marketplace": "FLIPKART",
+        "as-show": "on",
+        "as": "off",
+    }
 
     if sort and sort in _SORT_MAP:
         params["sort"] = _SORT_MAP[sort]
@@ -202,6 +209,8 @@ def _parse_sort_options(slots: list[dict]) -> list[SortOption]:
     return options
 
 
+_ccsi_cache: dict = {}
+
 async def search(
     query: str,
     page: int = 1,
@@ -212,6 +221,8 @@ async def search(
     filters: dict[str, list[str]] | None = None,
     timeout: int = 15,
 ) -> SearchResponse:
+    global _ccsi_cache
+    
     page_uri = _build_page_uri(
         query,
         page=page,
@@ -222,10 +233,24 @@ async def search(
         filters=filters,
     )
 
+    page_context: dict = {"fetchSeoData": True}
+    
+    cache_key = f"{query}:{sort}:{brand}"
+    if page > 1 and cache_key in _ccsi_cache:
+        page_context["paginatedFetch"] = True
+        page_context["pageNumber"] = page
+        page_context["paginationContextMap"] = {
+            "federator": {"SHOP_CARD": 0, "ccsi": _ccsi_cache[cache_key]}
+        }
+
+    import uuid
+    ssid = f"tbk3xszkzk000000{str(uuid.uuid4().int)[:12]}"
+    sqid = f"{str(uuid.uuid4().int)[:12]}"
+
     body = {
         "pageUri": page_uri,
-        "pageContext": {"fetchSeoData": True},
-        "requestContext": {"type": "BROWSE_PAGE"},
+        "pageContext": page_context,
+        "requestContext": {"type": "BROWSE_PAGE", "ssid": ssid, "sqid": sqid},
     }
 
     async with httpx.AsyncClient(
@@ -237,6 +262,14 @@ async def search(
     data = resp.json()
     response = data.get("RESPONSE", {})
     slots = response.get("slots", [])
+    
+    if page == 1:
+        page_data = response.get("pageData", {})
+        pagination_ctx = page_data.get("paginationContextMap", {})
+        if pagination_ctx:
+            ccsi = pagination_ctx.get("federator", {}).get("ccsi", "")
+            if ccsi:
+                _ccsi_cache[cache_key] = ccsi
 
     products: list[Product] = []
     for slot in slots:

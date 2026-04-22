@@ -225,10 +225,11 @@ async def search(
 
     filters = _parse_filters(soup)
 
-    pagination = soup.find("div", attrs={"data-component-type": "s-pagination"})
+    pagination = soup.find("div", class_="s-pagination-container")
     has_next = False
     if pagination:
-        has_next = bool(pagination.find("a", class_="s-pagination-next"))
+        next_link = pagination.find("a", class_="s-pagination-next")
+        has_next = next_link is not None
 
     result_info = soup.find("div", attrs={"data-component-type": "s-result-info-bar"})
     total = None

@@ -75,6 +75,7 @@ async def _fetch_all_pages_amazon(
         min_price=min_price, max_price=max_price,
         brand=brand, rh=rh,
     )
+    seen_ids = {p.id for p in first.products}
     all_products = list(first.products)
     pages_fetched = 1
     current_page = 1
@@ -89,7 +90,10 @@ async def _fetch_all_pages_amazon(
             min_price=min_price, max_price=max_price,
             brand=brand, rh=rh,
         )
-        all_products.extend(result.products)
+        for p in result.products:
+            if p.id not in seen_ids:
+                all_products.append(p)
+                seen_ids.add(p.id)
         pages_fetched += 1
         if not result.has_next_page:
             break
@@ -110,6 +114,7 @@ async def _fetch_all_pages_flipkart(
         min_price=min_price, max_price=max_price,
         brand=brand,
     )
+    seen_ids = {p.id for p in first.products}
     all_products = list(first.products)
     pages_fetched = 1
     current_page = 1
@@ -124,7 +129,11 @@ async def _fetch_all_pages_flipkart(
             min_price=min_price, max_price=max_price,
             brand=brand,
         )
-        all_products.extend(result.products)
+        # Deduplicate
+        for p in result.products:
+            if p.id not in seen_ids:
+                all_products.append(p)
+                seen_ids.add(p.id)
         pages_fetched += 1
         if not result.has_next_page:
             break
