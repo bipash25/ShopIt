@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
+import uuid
 from urllib.parse import quote, urlencode
 
 import httpx
 
+from app.cache import cache
 from app.models import (
     FilterGroup,
     FilterOption,
@@ -209,8 +212,6 @@ def _parse_sort_options(slots: list[dict]) -> list[SortOption]:
     return options
 
 
-_ccsi_cache: dict = {}
-
 async def search(
     query: str,
     page: int = 1,
@@ -221,8 +222,6 @@ async def search(
     filters: dict[str, list[str]] | None = None,
     timeout: int = 15,
 ) -> SearchResponse:
-    global _ccsi_cache
-    
     page_uri = _build_page_uri(
         query,
         page=page,
@@ -234,16 +233,19 @@ async def search(
     )
 
     page_context: dict = {"fetchSeoData": True}
-    
-    cache_key = f"{query}:{sort}:{brand}"
-    if page > 1 and cache_key in _ccsi_cache:
+
+    # Use all params to prevent cache collisions across different price/brand filters
+    filter_str = json.dumps(filters, sort_keys=True) if filters else ""
+    ccsi_key = ("flipkart_ccsi", query, str(sort), str(min_price), str(max_price), str(brand), filter_str)
+
+    cached_ccsi = cache.get(*ccsi_key)
+    if page > 1 and cached_ccsi:
         page_context["paginatedFetch"] = True
         page_context["pageNumber"] = page
         page_context["paginationContextMap"] = {
-            "federator": {"SHOP_CARD": 0, "ccsi": _ccsi_cache[cache_key]}
+            "federator": {"SHOP_CARD": 0, "ccsi": cached_ccsi}
         }
 
-    import uuid
     ssid = f"tbk3xszkzk000000{str(uuid.uuid4().int)[:12]}"
     sqid = f"{str(uuid.uuid4().int)[:12]}"
 
@@ -269,7 +271,7 @@ async def search(
         if pagination_ctx:
             ccsi = pagination_ctx.get("federator", {}).get("ccsi", "")
             if ccsi:
-                _ccsi_cache[cache_key] = ccsi
+                cache.set(ccsi, *ccsi_key, ttl=300)
 
     products: list[Product] = []
     for slot in slots:
